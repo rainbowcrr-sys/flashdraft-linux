@@ -5,6 +5,12 @@ on:
     branches: [ main ]
     tags: [ 'v0.*' ]
   pull_request:
+  schedule:
+    - cron: '23 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -16,17 +22,77 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Build
         run: dotnet build FlashDraft.Linux.sln -c Release
-      - name: Publish
+      - name: Publish self-contained payload
         run: dotnet publish src/FlashDraft.Desktop/FlashDraft.Desktop.csproj -c Release -r linux-x64 --self-contained true -o ./publish
-      # Adjustable: add dpkg / rpm packaging here when tooling is available.
-      # The payload stays unsigned at zero cost and is shipped with a SHA-256 sum.
-      - name: Package
-        run: tar -czf FlashDraft-Linux-x64.tar.gz -C ./publish .
+      - name: Build directly installable .deb
+        run: |
+          set -e
+          mkdir -p pkg/DEBIAN pkg/opt/flashdraft pkg/usr/bin pkg/usr/share/applications pkg/usr/share/icons/hicolor/256x256/apps
+          cp -a ./publish/. pkg/opt/flashdraft/
+          chmod +x pkg/opt/flashdraft/FlashDraft.Desktop
+          ln -s /opt/flashdraft/FlashDraft.Desktop pkg/usr/bin/flashdraft
+          cp packaging/flashdraft.desktop pkg/usr/share/applications/
+          cp assets/flashdraft-icon-256.png pkg/usr/share/icons/hicolor/256x256/apps/flashdraft.png
+          cp packaging/control pkg/DEBIAN/control
+          dpkg-deb --build pkg FlashDraft-Linux-x64.deb
+      - name: Portable tarball
+        run: tar -czf FlashDraft-Linux-x64-Portable.tar.gz -C ./publish .
       - name: Checksum
-        run: sha256sum FlashDraft-Linux-x64.tar.gz > SHA256SUMS.txt
+        run: sha256sum FlashDraft-Linux-x64.deb FlashDraft-Linux-x64-Portable.tar.gz > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
           name: flashdraft-linux
+          if-no-files-found: error
           path: |
-            ./FlashDraft-Linux-x64.tar.gz
+            ./FlashDraft-Linux-x64.deb
+            ./FlashDraft-Linux-x64-Portable.tar.gz
             ./SHA256SUMS.txt
+  release:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: flashdraft-*
+          path: dist
+          merge-multiple: true
+      - name: Publish build artifacts to a GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t FILES < <(find dist -type f -print)
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "::error::No build artifacts were downloaded"
+            exit 1
+          fi
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+            TITLE="FlashDraft ${TAG}"
+            NOTES="Stable release ${TAG}. All packages are unsigned; verify SHA256SUMS before use."
+            PRERELEASE=0
+          elif [[ "${GITHUB_EVENT_NAME}" == "schedule" ]]; then
+            TAG="nightly"
+            TITLE="Nightly build $(date -u +%F)"
+            NOTES="Automated nightly build. Unsigned and unverified; use at your own risk."
+            PRERELEASE=1
+          else
+            TAG="edge"
+            TITLE="Edge build"
+            NOTES="Rolling build from the main branch. Unsigned and unverified."
+            PRERELEASE=1
+          fi
+          ARGS=()
+          if [[ "$PRERELEASE" == "1" ]]; then ARGS+=(--prerelease); fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # Remove stale assets so nightly/edge releases never accumulate old files.
+            gh release view "$TAG" --json assets --jq '.assets[].name' | while IFS= read -r name; do
+              gh release delete-asset "$TAG" "$name" --yes >/dev/null 2>&1 || true
+            done
+            gh release upload "$TAG" "${FILES[@]}" --clobber
+          else
+            gh release create "$TAG" "${ARGS[@]}" --title "$TITLE" --notes "$NOTES" "${FILES[@]}"
+          fi
+          echo "Published ${#FILES[@]} file(s) to release $TAG"

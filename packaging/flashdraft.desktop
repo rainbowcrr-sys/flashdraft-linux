@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=FlashDraft
+Comment=LAN and Internet file transfer
+Exec=/opt/flashdraft/FlashDraft.Desktop
+Icon=flashdraft
+Terminal=false
+Categories=Utility;Network;FileTransfer;
+StartupWMClass=FlashDraft
