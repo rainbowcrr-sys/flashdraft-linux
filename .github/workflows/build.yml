@@ -1,0 +1,32 @@
+name: linux-build
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v0.*' ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build
+        run: dotnet build FlashDraft.Linux.sln -c Release
+      - name: Publish
+        run: dotnet publish src/FlashDraft.Desktop/FlashDraft.Desktop.csproj -c Release -r linux-x64 --self-contained true -o ./publish
+      # Adjustable: add dpkg / rpm packaging here when tooling is available.
+      # The payload stays unsigned at zero cost and is shipped with a SHA-256 sum.
+      - name: Package
+        run: tar -czf FlashDraft-Linux-x64.tar.gz -C ./publish .
+      - name: Checksum
+        run: sha256sum FlashDraft-Linux-x64.tar.gz > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flashdraft-linux
+          path: |
+            ./FlashDraft-Linux-x64.tar.gz
+            ./SHA256SUMS.txt
