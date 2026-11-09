@@ -22,7 +22,34 @@ permissions:
   contents: write
 
 jobs:
+  precheck:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          # Only the scheduled nightly is skipped. Every other event builds.
+          if [[ "${{ github.event_name }}" != "schedule" ]]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          SHA="${{ github.sha }}"
+          BODY="$(gh release view nightly --json body --jq '.body' 2>/dev/null || true)"
+          if [[ "$BODY" == *"Build-SHA: $SHA"* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Nightly already built for $SHA; skipping."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: precheck
+    if: needs.precheck.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,27 +60,33 @@ jobs:
         run: dotnet build FlashDraft.Linux.sln -c Release
       - name: Publish self-contained payload
         run: dotnet publish src/FlashDraft.Desktop/FlashDraft.Desktop.csproj -c Release -r linux-x64 --self-contained true -o ./publish
-      - name: Build directly installable .deb
+      - name: Fetch canonical license
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/rainbowcrr-sys/flashdraft-core/main/LICENSE -o packaging/LICENSE.txt \
+            || cp LICENSE packaging/LICENSE.txt
+      - name: Install nfpm
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Build directly installable deb and rpm
         run: |
           set -e
-          mkdir -p pkg/DEBIAN pkg/opt/flashdraft pkg/usr/bin pkg/usr/share/applications pkg/usr/share/icons/hicolor/256x256/apps
-          cp -a ./publish/. pkg/opt/flashdraft/
-          chmod +x pkg/opt/flashdraft/FlashDraft.Desktop
-          ln -s /opt/flashdraft/FlashDraft.Desktop pkg/usr/bin/flashdraft
-          cp packaging/flashdraft.desktop pkg/usr/share/applications/
-          cp assets/flashdraft-icon-256.png pkg/usr/share/icons/hicolor/256x256/apps/flashdraft.png
-          cp packaging/control pkg/DEBIAN/control
-          dpkg-deb --build pkg FlashDraft-Linux-x64.deb
+          cp packaging/LICENSE.txt publish/LICENSE.txt
+          nfpm package -f packaging/nfpm.yaml -p deb -t FlashDraft-Linux-x64.deb
+          nfpm package -f packaging/nfpm.yaml -p rpm -t FlashDraft-Linux-x64.rpm
+          test -s FlashDraft-Linux-x64.deb
+          test -s FlashDraft-Linux-x64.rpm
       - name: Portable tarball
         run: tar -czf FlashDraft-Linux-x64-Portable.tar.gz -C ./publish .
       - name: Checksum
-        run: sha256sum FlashDraft-Linux-x64.deb FlashDraft-Linux-x64-Portable.tar.gz > SHA256SUMS.txt
+        run: sha256sum FlashDraft-Linux-x64.deb FlashDraft-Linux-x64.rpm FlashDraft-Linux-x64-Portable.tar.gz > SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
           name: flashdraft-linux
           if-no-files-found: error
           path: |
             ./FlashDraft-Linux-x64.deb
+            ./FlashDraft-Linux-x64.rpm
             ./FlashDraft-Linux-x64-Portable.tar.gz
             ./SHA256SUMS.txt
   release:
@@ -98,6 +131,7 @@ jobs:
             NOTES="Rolling build from the main branch. Unsigned and unverified."
             PRERELEASE=1
           fi
+          NOTES="${NOTES} | Build-SHA: ${GITHUB_SHA}"
           ARGS=()
           if [[ "$PRERELEASE" == "1" ]]; then ARGS+=(--prerelease); fi
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -106,6 +140,7 @@ jobs:
               gh release delete-asset "$TAG" "$name" --yes >/dev/null 2>&1 || true
             done
             gh release upload "$TAG" "${FILES[@]}" --clobber
+            gh release edit "$TAG" --notes "$NOTES" || true
           else
             gh release create "$TAG" "${ARGS[@]}" --title "$TITLE" --notes "$NOTES" "${FILES[@]}"
           fi

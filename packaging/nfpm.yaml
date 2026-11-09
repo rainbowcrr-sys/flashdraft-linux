@@ -1,0 +1,36 @@
+name: flashdraft
+arch: amd64
+platform: linux
+version: 0.1.1
+section: utils
+priority: optional
+maintainer: rainbowcrr-sys <rainbowcrr-sys@users.noreply.github.com>
+description: FlashDraft - LAN and Internet peer-to-peer file transfer
+vendor: rainbowcrr-sys
+homepage: https://github.com/rainbowcrr-sys/flashdraft-linux
+license: Apache-2.0
+depends:
+  - libx11-6
+  - libxext6
+  - libice6
+  - libsm6
+  - libfontconfig1
+  - libxrender1
+contents:
+  - src: ./publish/
+    dst: /opt/flashdraft
+  - src: /opt/flashdraft/FlashDraft.Desktop
+    dst: /usr/bin/flashdraft
+    type: symlink
+  - src: ./packaging/LICENSE.txt
+    dst: /usr/share/doc/flashdraft/copyright
+    file_info:
+      mode: 0644
+  - src: ./packaging/LICENSE.txt
+    dst: /usr/share/flashdraft/LICENSE.txt
+    file_info:
+      mode: 0644
+  - src: ./packaging/flashdraft.desktop
+    dst: /usr/share/applications/flashdraft.desktop
+  - src: ./assets/flashdraft-icon-256.png
+    dst: /usr/share/icons/hicolor/256x256/apps/flashdraft.png
