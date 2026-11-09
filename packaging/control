@@ -1,0 +1,10 @@
+Package: flashdraft
+Version: 0.1.2
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: rainbowcrr-sys <rainbowcrr-sys@users.noreply.github.com>
+Depends: libx11-6, libxext6, libice6, libsm6, libfontconfig1, libxrender1
+Description: FlashDraft - LAN and Internet peer-to-peer file transfer
+ Dual-stack STUN discovery and UDP hole punching with manually exchanged
+ offer codes. The authoritative packaging configuration is packaging/nfpm.yaml.
